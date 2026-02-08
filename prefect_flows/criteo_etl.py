@@ -18,6 +18,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from src.prefect_tasks.bronze import load_to_bronze_layer
 from src.prefect_tasks.download import download_criteo_from_kaggle
+from src.prefect_tasks.silver import validate_bronze_data
 
 
 @flow(name="criteo_etl_pipeline")
@@ -32,8 +33,8 @@ def criteo_attribution_etl() -> dict:
     raw_data_path = download_criteo_from_kaggle()
     bronze_path = load_to_bronze_layer(raw_data_path=raw_data_path)
 
-    # Silver Layer (placeholder - to be added)
-    # dq_report = validate_bronze_data(bronze_path=bronze_path)
+    # Silver Layer
+    dq_report = validate_bronze_data(bronze_path=bronze_path)
     # silver_path = transform_to_silver_layer(bronze_path=bronze_path)
 
     # Gold Layer (placeholder - to be added)
@@ -43,6 +44,7 @@ def criteo_attribution_etl() -> dict:
     return {
         "raw_data_path": raw_data_path,
         "bronze_path": bronze_path,
+        "data_quality": dq_report,
     }
 
 
