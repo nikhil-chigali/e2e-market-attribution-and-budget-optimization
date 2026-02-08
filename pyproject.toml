@@ -1,0 +1,16 @@
+[project]
+name = "e2e-market-attribution-and-budget-optimization"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "duckdb>=1.4.4",
+    "ipykernel>=7.2.0",
+    "kagglehub>=0.4.3",
+    "matplotlib>=3.10.8",
+    "numpy>=2.4.2",
+    "pandas>=3.0.0",
+    "prefect>=3.6.16",
+    "pyarrow>=23.0.0",
+]

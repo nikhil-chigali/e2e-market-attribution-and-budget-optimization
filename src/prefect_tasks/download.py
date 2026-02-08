@@ -5,8 +5,8 @@ from pathlib import Path
 import kagglehub
 from prefect import task
 
-# Project root: src/data/tasks/download.py -> project root is 4 parents up
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+# Project root: src/prefect_tasks/download.py -> project root is 3 parents up
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 CRITEO_DATASET_HANDLE = "sharatsachin/criteo-attribution-modeling"
 
