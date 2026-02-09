@@ -68,7 +68,7 @@ def load_to_bronze_layer(raw_data_path: str) -> str:
                 ROW_NUMBER() OVER () as impression_id,
                 *
             FROM read_csv_auto('{data_file_str}', delim=E'\\t')
-        ) TO '{output_path_str}' (FORMAT PARQUET)
+        ) TO '{output_path_str}' (FORMAT PARQUET, COMPRESSION 'zstd')
         """
     )
 

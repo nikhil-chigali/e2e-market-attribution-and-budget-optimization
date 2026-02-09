@@ -18,7 +18,8 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from src.prefect_tasks.bronze import load_to_bronze_layer
 from src.prefect_tasks.download import download_criteo_from_kaggle
-from src.prefect_tasks.silver import validate_bronze_data
+from src.prefect_tasks.gold import create_campaign_touchpoints_table, create_user_journeys_table
+from src.prefect_tasks.silver import transform_to_silver_layer, validate_bronze_data
 
 
 @flow(name="criteo_etl_pipeline")
@@ -35,15 +36,18 @@ def criteo_attribution_etl() -> dict:
 
     # Silver Layer
     dq_report = validate_bronze_data(bronze_path=bronze_path)
-    # silver_path = transform_to_silver_layer(bronze_path=bronze_path)
+    silver_path = transform_to_silver_layer(bronze_path=bronze_path)
 
-    # Gold Layer (placeholder - to be added)
-    # user_journeys_path = create_user_journeys_table(silver_path=silver_path)
-    # touchpoints_path = create_campaign_touchpoints_table(silver_path=silver_path)
+    # Gold Layer
+    user_journeys_path = create_user_journeys_table(silver_path=silver_path)
+    touchpoints_path = create_campaign_touchpoints_table(silver_path=silver_path)
 
     return {
         "raw_data_path": raw_data_path,
         "bronze_path": bronze_path,
+        "silver_path": silver_path,
+        "user_journeys_path": user_journeys_path,
+        "touchpoints_path": touchpoints_path,
         "data_quality": dq_report,
     }
 
@@ -51,3 +55,8 @@ def criteo_attribution_etl() -> dict:
 if __name__ == "__main__":
     result = criteo_attribution_etl()
     print("Pipeline complete:", result)
+    dq = result.get("data_quality", {})
+    total_conv = dq.get("total_conversions", 0) or 0
+    attr_conv = dq.get("attributed_conversions", 0) or 0
+    if total_conv > 0:
+        print(f"Attributed conversions: {attr_conv:,} / {total_conv:,} ({attr_conv / total_conv:.2%})")
