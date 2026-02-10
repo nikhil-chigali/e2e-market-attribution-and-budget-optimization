@@ -1,9 +1,10 @@
 """Prefect tasks for downloading raw data from Kaggle."""
 
 from pathlib import Path
+import time
 
 import kagglehub
-from prefect import task
+from prefect import task, get_run_logger
 
 # Project root: src/prefect_tasks/download.py -> project root is 3 parents up
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -26,13 +27,27 @@ def download_criteo_from_kaggle(
     Returns:
         Path to the downloaded dataset directory (contains TSV/CSV files).
     """
+    logger = get_run_logger()
     if output_dir is None:
         output_dir = _PROJECT_ROOT / "data" / "raw"
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
+    logger.info(
+        "Starting download_criteo_from_kaggle",
+        extra={"dataset_handle": dataset_handle, "output_dir": str(output_path)},
+    )
+    start = time.perf_counter()
+
     downloaded_path = kagglehub.dataset_download(
         handle=dataset_handle,
         output_dir=str(output_path),
+    )
+
+    elapsed = time.perf_counter() - start
+    logger.info(
+        "Completed download_criteo_from_kaggle in %.2f seconds",
+        elapsed,
+        extra={"downloaded_path": str(downloaded_path)},
     )
     return str(downloaded_path)

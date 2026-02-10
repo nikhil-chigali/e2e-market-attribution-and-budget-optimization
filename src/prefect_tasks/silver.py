@@ -1,11 +1,12 @@
 """Prefect tasks for Silver layer - data cleaning and validation."""
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 
 import duckdb
-from prefect import task
+from prefect import task, get_run_logger
 
 # Project root: src/prefect_tasks/silver.py -> project root is 3 parents up
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -35,12 +36,16 @@ def validate_bronze_data(
         - distinct_users, distinct_campaigns: counts
         - total_conversions: sum of conversions
         - attributed_conversions: sum of attribution
-        - distinct_conversion_ids: count distinct conversion_id where not '-1'
-        - bad_attribution_records: count where attribution=1 AND cpo=-1
-        - min_timestamp, max_timestamp, timestamp_duration
-        - total_rows
+        - min_timestamp, max_timestamp, max_campaign_duration
+        - total_impressions, distinct_users, distinct_campaigns, total_conversions, attributed_conversions, distinct_conversion_ids
     """
+    logger = get_run_logger()
     path_str = str(Path(bronze_path).resolve()).replace("\\", "/")
+
+    logger.info(
+        "Starting validate_bronze_data", extra={"bronze_path": path_str, "save_report": save_report}
+    )
+    start = time.perf_counter()
 
     conn = duckdb.connect()
     dq_report: dict[str, Any] = {}
@@ -61,44 +66,49 @@ def validate_bronze_data(
     stats = conn.execute(
         f"""
         SELECT
-            COUNT(*) as total_rows,
+            COUNT(*) as total_impressions,
             COUNT(DISTINCT uid) as distinct_users,
             COUNT(DISTINCT campaign) as distinct_campaigns,
-            COALESCE(SUM(conversion), 0)::BIGINT as total_conversions,
-            COALESCE(SUM(attribution), 0)::BIGINT as attributed_conversions,
-            COUNT(DISTINCT CASE WHEN conversion_id IS NOT NULL AND conversion_id != '-1' THEN conversion_id END) as distinct_conversion_ids,
+            SUM(conversion)::BIGINT as total_conversions,
+            SUM(attribution)::BIGINT as attributed_conversions,
+            COUNT(DISTINCT 
+                CASE 
+                    WHEN conversion_id IS NOT NULL AND conversion_id != '-1' 
+                    THEN conversion_id END) as distinct_conversion_ids,
             MIN(timestamp) as min_timestamp,
             MAX(timestamp) as max_timestamp
         FROM read_parquet('{path_str}')
         """
     ).fetchone()
 
-    # Bad attribution records: attribution=1 but cpo=-1
-    bad_attribution = conn.execute(
-        f"""
-        SELECT COUNT(*) FROM read_parquet('{path_str}')
-        WHERE attribution = 1 AND cpo = -1
-        """
-    ).fetchone()[0]
-    dq_report["bad_attribution_records"] = bad_attribution
-
-    dq_report.update({
-        "total_rows": stats[0],
-        "distinct_users": stats[1],
-        "distinct_campaigns": stats[2],
-        "total_conversions": stats[3],
-        "attributed_conversions": stats[4],
-        "distinct_conversion_ids": stats[5],
-        "min_timestamp": stats[6],
-        "max_timestamp": stats[7],
-    })
-    dq_report["timestamp_duration"] = (stats[7] - stats[6]) if stats[6] is not None and stats[7] is not None else None
+    dq_report.update(
+        {
+            "total_impressions": stats[0],
+            "distinct_users": stats[1],
+            "distinct_campaigns": stats[2],
+            "total_conversions": stats[3],
+            "attributed_conversions": stats[4],
+            "distinct_conversion_ids": stats[5],
+            "min_timestamp": stats[6],
+            "max_timestamp": stats[7],
+        }
+    )
+    dq_report["max_campaign_duration"] = (
+        (stats[7] - stats[6]) if stats[6] is not None and stats[7] is not None else None
+    )
 
     if save_report:
         out_path = Path(report_path) if report_path else DQ_REPORT_PATH
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with open(out_path, "w") as f:
             json.dump(dq_report, f, indent=2)
+
+    elapsed = time.perf_counter() - start
+    logger.info(
+        "Completed validate_bronze_data in %.2f seconds",
+        elapsed,
+        extra={"dq_report_path": str(report_path or DQ_REPORT_PATH)},
+    )
 
     return dq_report
 
@@ -109,8 +119,8 @@ def transform_to_silver_layer(bronze_path: str) -> str:
     Transforms bronze data into silver clean_impressions parquet.
 
     Timestamp treated as relative (seconds from start): day_number, hour_of_day.
-    Keeps timestamp, conversion_timestamp, conversion_id, attribution, click context.
-    cpo split into cost_per_order_actual (only when attribution=1) and cost_per_order_predicted (all rows).
+    Keeps timestamp, conversion_timestamp, conversion_id, attribution, and click context.
+    Phase 1 does not derive any CPO-based columns from the raw `cpo` field.
 
     Args:
         bronze_path: Path to the bronze parquet file.
@@ -118,10 +128,17 @@ def transform_to_silver_layer(bronze_path: str) -> str:
     Returns:
         Path to the silver parquet file.
     """
+    logger = get_run_logger()
     bronze_str = str(Path(bronze_path).resolve()).replace("\\", "/")
     output_path = SILVER_OUTPUT_PATH
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_str = str(output_path.resolve()).replace("\\", "/")
+
+    logger.info(
+        "Starting transform_to_silver_layer",
+        extra={"bronze_path": bronze_str, "silver_path": output_str},
+    )
+    start = time.perf_counter()
 
     conn = duckdb.connect()
 
@@ -143,8 +160,6 @@ def transform_to_silver_layer(bronze_path: str) -> str:
                 NULLIF(click_pos, -1) as click_pos,
                 NULLIF(click_nb, -1) as click_nb,
                 cost,
-                CASE WHEN attribution = 1 THEN cpo ELSE NULL END as cost_per_order_actual,
-                cpo as cost_per_order_predicted,
                 NULLIF(time_since_last_click, -1) as time_since_last_click,
                 CASE
                     WHEN ((timestamp % 86400) / 3600)::INTEGER BETWEEN 6 AND 11 THEN 'morning'
@@ -157,6 +172,13 @@ def transform_to_silver_layer(bronze_path: str) -> str:
             WHERE cost > 0
         ) TO '{output_str}' (FORMAT PARQUET, COMPRESSION 'zstd')
         """
+    )
+
+    elapsed = time.perf_counter() - start
+    logger.info(
+        "Completed transform_to_silver_layer in %.2f seconds",
+        elapsed,
+        extra={"silver_path": str(output_path)},
     )
 
     return str(output_path)

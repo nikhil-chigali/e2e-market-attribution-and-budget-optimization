@@ -1,9 +1,10 @@
 """Prefect tasks for Bronze layer - raw data ingestion."""
 
 from pathlib import Path
+import time
 
 import duckdb
-from prefect import task
+from prefect import task, get_run_logger
 
 # Project root: src/prefect_tasks/bronze.py -> project root is 3 parents up
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -50,9 +51,16 @@ def load_to_bronze_layer(raw_data_path: str) -> str:
         - impression_id (auto-increment via ROW_NUMBER())
         - All source columns: timestamp, uid, campaign, click, conversion, cost, etc.
     """
+    logger = get_run_logger()
     data_file = _find_data_file(raw_data_path)
     output_path = BRONZE_OUTPUT_PATH
     output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    logger.info(
+        "Starting load_to_bronze_layer",
+        extra={"raw_data_path": raw_data_path, "output_path": str(output_path)},
+    )
+    start = time.perf_counter()
 
     conn = duckdb.connect()
 
@@ -70,6 +78,13 @@ def load_to_bronze_layer(raw_data_path: str) -> str:
             FROM read_csv_auto('{data_file_str}', delim=E'\\t')
         ) TO '{output_path_str}' (FORMAT PARQUET, COMPRESSION 'zstd')
         """
+    )
+
+    elapsed = time.perf_counter() - start
+    logger.info(
+        "Completed load_to_bronze_layer in %.2f seconds",
+        elapsed,
+        extra={"bronze_path": str(output_path)},
     )
 
     return str(output_path)
